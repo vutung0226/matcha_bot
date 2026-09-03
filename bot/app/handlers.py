@@ -1,9 +1,16 @@
 import logging
+import os
 
+import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.rag import retrieve_context
+
 logger = logging.getLogger(__name__)
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -24,13 +31,41 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def generate_reply(user_message: str) -> str:
-    """Placeholder cho phần trả lời thông minh.
+    context = await retrieve_context(user_message)
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là trợ lý tư vấn matcha bằng tiếng Việt. "
+                    "Trả lời chính xác, thân thiện, ngắn gọn. "
+                    "Nếu không chắc hoặc tài liệu không có thông tin, hãy nói rõ thay vì bịa thông tin. "
+                    "Chỉ sử dụng thông tin trong phần TÀI LIỆU THAM KHẢO khi câu hỏi liên quan đến kiến thức matcha."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"TÀI LIỆU THAM KHẢO:\n{context}\n\nCÂU HỎI:\n{user_message}",
+            },
+        ],
+        "options": {"temperature": 0.4},
+    }
 
-    TODO: thay bằng lời gọi RAG + LLM (Groq API hoặc Ollama local) theo thiết kế
-    trong design-opensource.md (mục 1b). Hiện tại chỉ echo lại để xác nhận bot
-    đã chạy được end-to-end trước khi tích hợp AI.
-    """
-    return f"Mình đã nhận câu hỏi: \"{user_message}\"\n(Phần trả lời AI sẽ được tích hợp ở bước tiếp theo.)"
+    try:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+            response = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+            response.raise_for_status()
+            reply = response.json().get("message", {}).get("content", "").strip()
+    except (httpx.HTTPError, ValueError) as error:
+        logger.exception("Không thể gọi Ollama: %s", error)
+        return (
+            "Mình chưa kết nối được với model AI local. "
+            "Hãy kiểm tra Ollama và model đã được khởi động chưa."
+        )
+
+    return reply or "Model chưa trả về nội dung. Bạn thử hỏi lại nhé."
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
