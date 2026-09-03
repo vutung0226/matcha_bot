@@ -1,0 +1,7 @@
+services:
+  telegram-bot:
+    build: .
+    container_name: matcha-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
