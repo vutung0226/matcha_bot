@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.rag import retrieve_context
+from app.session import clear_session, get_history, save_exchange
 
 logger = logging.getLogger(__name__)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
@@ -14,6 +15,8 @@ OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat:
+        await clear_session(str(update.effective_chat.id))
     await update.message.reply_text(
         "Xin chào! Mình là trợ lý tư vấn Matcha 🍵\n"
         "Gõ câu hỏi bất kỳ về Matcha (nguồn gốc, cách pha, nhiệt độ nước...) mình sẽ trả lời.\n"
@@ -30,8 +33,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
-async def generate_reply(user_message: str) -> str:
+async def generate_reply(user_message: str, chat_id: str | None = None) -> str:
     context = await retrieve_context(user_message)
+    history = await get_history(chat_id) if chat_id else []
     payload = {
         "model": OLLAMA_MODEL,
         "stream": False,
@@ -45,10 +49,8 @@ async def generate_reply(user_message: str) -> str:
                     "Chỉ sử dụng thông tin trong phần TÀI LIỆU THAM KHẢO khi câu hỏi liên quan đến kiến thức matcha."
                 ),
             },
-            {
-                "role": "user",
-                "content": f"TÀI LIỆU THAM KHẢO:\n{context}\n\nCÂU HỎI:\n{user_message}",
-            },
+            *history,
+            {"role": "user", "content": f"TÀI LIỆU THAM KHẢO:\n{context}\n\nCÂU HỎI:\n{user_message}"},
         ],
         "options": {"temperature": 0.4},
     }
@@ -65,12 +67,16 @@ async def generate_reply(user_message: str) -> str:
             "Hãy kiểm tra Ollama và model đã được khởi động chưa."
         )
 
-    return reply or "Model chưa trả về nội dung. Bạn thử hỏi lại nhé."
+    reply = reply or "Model chưa trả về nội dung. Bạn thử hỏi lại nhé."
+    if chat_id:
+        await save_exchange(chat_id, user_message, reply)
+    return reply
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_message = update.message.text
     logger.info("Nhận tin nhắn từ %s: %s", update.effective_user.id, user_message)
 
-    reply = await generate_reply(user_message)
+    chat_id = str(update.effective_chat.id) if update.effective_chat else None
+    reply = await generate_reply(user_message, chat_id)
     await update.message.reply_text(reply)

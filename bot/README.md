@@ -78,24 +78,38 @@ Lệnh ingest sẽ chia tài liệu thành các đoạn, tạo embedding bằng 
 - Gửi `/help` → bot hiện hướng dẫn.
 - Gửi câu hỏi bất kỳ (vd: "Nhiệt độ nước pha matcha bao nhiêu?") → bot gọi Qwen qua Ollama và trả lời bằng LLM local.
 
-## 8. Bước tiếp theo
+## 8. Session/context với Valkey
 
-- Thêm RAG: embedding bằng `bge-m3`/`multilingual-e5` và vector database Qdrant hoặc Chroma.
-- Thêm Redis để lưu session/ngữ cảnh hội thoại nhiều lượt.
+Compose chạy Valkey (tương thích Redis) và lưu dữ liệu trong volume `valkey-data`. Bot lưu tối đa 10 lượt hỏi-đáp cho mỗi chat Telegram, tự hết hạn sau 24 giờ. Context này được đưa vào các câu hỏi tiếp theo để bot hiểu cách gọi lại nội dung trước đó.
+
+Cấu hình trong `.env`:
+
+```bash
+VALKEY_URL=redis://valkey:6379/0
+SESSION_TTL=86400
+SESSION_MAX_TURNS=10
+```
+
+Lệnh `/start` sẽ xóa context cũ và bắt đầu phiên mới. Khi Valkey tạm thời không truy cập được, bot vẫn trả lời bằng RAG/LLM nhưng không giữ được lịch sử.
+
+## 9. Bước tiếp theo
+
+- Bổ sung tài liệu matcha có nguồn chính thức và metadata nguồn trong Qdrant.
+- Thêm lệnh quản trị để xóa hoặc xem session khi cần hỗ trợ người dùng.
 - Thêm CI/CD (Woodpecker/GitHub Actions) để tự động build & deploy khi push code.
 
-## 9. Deploy lên VPS free (khuyến nghị nếu mạng local chặn Telegram)
+## 10. Deploy lên VPS free (khuyến nghị nếu mạng local chặn Telegram)
 
 > **Vì sao cần bước này**: một số mạng công ty/tổ chức chặn hoặc soi (SSL-inspect) traffic tới `api.telegram.org`, khiến bot báo lỗi `CERTIFICATE_VERIFY_FAILED` dù code hoàn toàn đúng. Cách xử lý an toàn nhất là chạy bot trên một máy chủ không bị chặn, thay vì tắt xác thực SSL (không an toàn).
 
-### 9.1. Tạo VPS miễn phí (Oracle Cloud Always Free Tier)
+### 10.1. Tạo VPS miễn phí (Oracle Cloud Always Free Tier)
 
 1. Đăng ký tài khoản tại [oracle.com/cloud/free](https://www.oracle.com/cloud/free/) (cần thẻ để xác minh nhưng gói Always Free không bị trừ tiền).
 2. Vào **Compute → Instances → Create Instance**.
 3. Chọn image **Ubuntu 22.04/24.04**, shape thuộc nhóm **Always Free** (VM.Standard.A1.Flex hoặc VM.Standard.E2.1.Micro).
 4. Tải về SSH key được cấp (hoặc dùng key có sẵn của bạn), ghi nhớ **Public IP**.
 
-### 9.2. Cài Docker trên VPS
+### 10.2. Cài Docker trên VPS
 
 SSH vào VPS rồi chạy:
 
@@ -109,7 +123,7 @@ sudo usermod -aG docker $USER
 newgrp docker
 ```
 
-### 9.3. Đưa code lên VPS
+### 10.3. Đưa code lên VPS
 
 Từ máy dev (thư mục `bot/`):
 
@@ -121,7 +135,7 @@ rsync -avz --exclude '.venv' --exclude '__pycache__' \
 
 (Nếu dùng Git: đơn giản hơn là `git clone` repo trực tiếp trên VPS, miễn là không commit file `.env`.)
 
-### 9.4. Chạy bot trên VPS
+### 10.4. Chạy bot trên VPS
 
 ```bash
 ssh -i /path/to/key ubuntu@<PUBLIC_IP>
@@ -133,7 +147,7 @@ docker compose logs -f
 
 Vì Oracle Cloud không nằm sau proxy chặn Telegram, bot sẽ kết nối bình thường. Gửi `/start` trong Telegram để xác nhận.
 
-### 9.5. Lưu ý bảo mật
+### 10.5. Lưu ý bảo mật
 
 - Không mở port nào ra ngoài internet cho bot này (polling mode không cần inbound port, chỉ cần outbound HTTPS).
 - Trong Oracle Cloud, mặc định Security List đã chặn hết inbound trừ SSH (22) — không cần mở thêm port cho bot polling.
