@@ -1,10 +1,13 @@
 import logging
 import os
+import time
 
 import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.metrics import LLM_LATENCY_SECONDS, LLM_REQUESTS_TOTAL
+from app.optimization import normalize_query
 from app.rag import retrieve_context
 from app.session import clear_session, get_history, save_exchange
 
@@ -34,7 +37,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def generate_reply(user_message: str, chat_id: str | None = None) -> str:
-    context = await retrieve_context(user_message)
+    normalized_message = normalize_query(user_message)
+    context = await retrieve_context(normalized_message)
     history = await get_history(chat_id) if chat_id else []
     payload = {
         "model": OLLAMA_MODEL,
@@ -50,18 +54,23 @@ async def generate_reply(user_message: str, chat_id: str | None = None) -> str:
                 ),
             },
             *history,
-            {"role": "user", "content": f"TÀI LIỆU THAM KHẢO:\n{context}\n\nCÂU HỎI:\n{user_message}"},
+            {"role": "user", "content": f"TÀI LIỆU THAM KHẢO:\n{context}\n\nCÂU HỎI:\n{normalized_message}"},
         ],
         "options": {"temperature": 0.4},
     }
 
+    start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
             response = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
             response.raise_for_status()
             reply = response.json().get("message", {}).get("content", "").strip()
+        LLM_REQUESTS_TOTAL.labels(model=OLLAMA_MODEL, status="success").inc()
+        LLM_LATENCY_SECONDS.labels(model=OLLAMA_MODEL).observe(time.perf_counter() - start)
     except (httpx.HTTPError, ValueError) as error:
         logger.exception("Không thể gọi Ollama: %s", error)
+        LLM_REQUESTS_TOTAL.labels(model=OLLAMA_MODEL, status="error").inc()
+        LLM_LATENCY_SECONDS.labels(model=OLLAMA_MODEL).observe(time.perf_counter() - start)
         return (
             "Mình chưa kết nối được với model AI local. "
             "Hãy kiểm tra Ollama và model đã được khởi động chưa."
