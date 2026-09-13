@@ -21,13 +21,81 @@ services:
     volumes:
       - valkey-data:/data
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: matcha-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.0
+    container_name: matcha-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: matcha-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+
+  promtail:
+    image: grafana/promtail:3.5.0
+    container_name: matcha-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-data:/tmp
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: matcha-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-now}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+
   telegram-bot:
     build: .
     container_name: matcha-telegram-bot
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8001"
     env_file:
       - .env
     environment:
+      WEBHOOK_MODE: ${WEBHOOK_MODE:-false}
+      WEBHOOK_URL: ${WEBHOOK_URL:-https://example.com}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-8001}
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/telegram}
+      HOST: 0.0.0.0
+      PORT: 8001
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
@@ -46,3 +114,7 @@ volumes:
   ollama-data:
   qdrant-data:
   valkey-data:
+  prometheus-data:
+  loki-data:
+  promtail-data:
+  grafana-data:
